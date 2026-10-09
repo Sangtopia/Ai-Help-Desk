@@ -1,5 +1,38 @@
-# Ai-Help-Desk
-AI IT help desk agent with triage, RAG, tool calling and human approval gates
+# AI IT Help Desk
+
+An AI agent that works IT help desk tickets the way a Tier 1 technician does: triage the ticket, check the knowledge base, investigate with tools, fix what it can, and escalate what it can't. Risky actions such as password resets wait for a human to approve them, and every action is audited.
+
+**Live demo:** _add your Render URL here_ · Built with Python, FastAPI, Claude (tool calling and structured outputs) and Chroma.
+
+On a 64-ticket eval run twice: **98.4% of runs pass every check, 0 unsafe actions, and none of 16 prompt-injection or social-engineering attempts succeeded.** See [Evals](#evals).
+
+All people, companies and data are fictional. The project mirrors real help desk workflows without using any client data.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U([Employee]) -->|ticket| API[FastAPI]
+    API --> S{Injection scan}
+    S --> T[Triage<br/>Claude structured output]
+    T --> F{Social engineering<br/>or injection?}
+    F -->|yes| B[Blocked: security reply,<br/>escalated to security]
+    F -->|no| A[Agent loop<br/>Claude tool calling]
+    KB[(Knowledge base<br/>31 articles in Chroma)] --> A
+    A <-->|read-only tools run now| ENV[(Mock IT environment<br/>SQLite)]
+    A -->|risky tools| G{Guardrails<br/>identity · preconditions}
+    G -->|refused| A
+    G -->|queued| Q[Approval queue]
+    Q -->|technician approves| ENV
+    A --> E{Escalation rules<br/>P1 · low confidence}
+    E --> R[Tier routing<br/>Tier 1 · Tier 2 · Security]
+    B --> R
+    R --> UI[Technician inbox]
+    Q --> UI
+    A -.-> L[(Audit log)]
+    G -.-> L
+    Q -.-> L
+```
 
 ## Mock IT environment
 
@@ -38,13 +71,15 @@ Every guardrail is enforced in code, so none of them depend on the model followi
 | --- | --- |
 | Approval gate | Read-only tools run automatically. `reset_password`, `unlock_account`, `release_email` and `block_sign_in` are queued until a technician approves them, then run and are re-checked at that moment. |
 | Identity check | Resets and unlocks only for the ticket sender's own account; email releases only from the sender's own mailbox. Violations are refused outright, never queued. |
+| Preconditions | A risky action that can't apply (unlocking an account that isn't locked, releasing phishing) is refused before it reaches a technician's queue. |
 | Audit log | Every tool call by the agent, the system or a technician is recorded with who, what, when, why (each tool call requires a `reason`) and the outcome. |
-| Prompt-injection defense | Tickets are scanned for injection phrases and triage flags social engineering. Flagged tickets are blocked and sent to security before the agent or any tool sees them. |
-| Escalation rules | P1 and low-confidence tickets are always escalated to Tier 2, even if the agent didn't escalate them itself. |
+| Prompt-injection defense | Tickets are scanned for injection phrases (ignoring text the user is only quoting, such as a scam they're reporting) and triage flags social engineering. Flagged tickets are blocked and sent to security before the agent or any tool sees them; a separate call with no tools writes the reply. |
+| Escalation rules | P1 tickets, and tickets the agent finishes with low confidence, are always escalated to Tier 2, even if the agent didn't escalate them itself. |
+| Tier routing | Tickets needing a person are auto-assigned by code to Tier 1, Tier 2 or security, and technicians can only see and act on their own tier and below. |
 
 The tests include a scripted "hijacked" model that tries to reset the CEO's password from someone else's ticket, to show the code blocks it regardless of what the model does.
 
-Run `python -m helpdesk.agent` to work four demo tickets end to end: a lockout, a quarantined email, a prompt-injection attempt and a push-fatigue account compromise.
+Run `python -m helpdesk.agent` to work six demo tickets end to end: a lockout, a quarantined email, a prompt-injection attempt, a push-fatigue account compromise, an offline printer and a how-to question.
 
 ## Interface
 
@@ -104,3 +139,11 @@ uvicorn helpdesk.api:app --reload
 Open http://localhost:8000. You can also run `python -m helpdesk.triage` to triage five sample tickets from the command line.
 
 Try a search: `python -m helpdesk.kb search "vpn won't connect"`
+
+## Deploying
+
+[render.yaml](render.yaml) deploys the app to [Render](https://render.com) as one free web service. In Render, choose **New > Blueprint**, pick this repository, and enter your `ANTHROPIC_API_KEY` when asked.
+
+- **Demo data:** the database is rebuilt on every start with the fictional company and six pre-worked tickets ([demo/snapshot.json](demo/snapshot.json)), so visitors see the agent's work without spending API credits. Regenerate them with `python -m helpdesk.demo export`.
+- **Cost limits:** every new ticket calls Claude (about $0.10), so the public site caps new tickets with `MAX_TICKETS_PER_DAY` and `MAX_TICKETS_PER_VISITOR_PER_HOUR`. Also set a monthly spend limit in the Anthropic Console.
+- **Free tier:** the service sleeps after 15 minutes without traffic, so the first visit after that takes about a minute to wake up.

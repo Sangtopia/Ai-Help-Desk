@@ -1,9 +1,12 @@
 """API tests. Tickets are created with the scripted model, so no Claude calls are made."""
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
-from helpdesk import agent, api, tools
+from helpdesk import agent, api, demo, tools
+from helpdesk.db import session
 from helpdesk.models import Ticket
 from helpdesk.seed import build_database
 from tests.test_agent import ScriptedClient, make_resolution, make_triage, tool_call
@@ -99,7 +102,45 @@ def test_rules_count_guardrail_activity(client):
     assert stats["audit_log"] > 0
 
 
-def test_reset_clears_tickets(client):
+def test_reset_clears_tickets(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(demo, "SNAPSHOT", tmp_path / "missing.json")
     locked_out_ticket()
     client.post("/api/reset")
     assert client.get("/api/tickets", params={"technician": SAM}).json() == []
+
+
+def test_reset_restores_the_demo_snapshot(client, monkeypatch, tmp_path):
+    """Export a snapshot from a scripted run, then check reset replays it with recent timestamps."""
+    locked_out_ticket()
+    with session() as conn:
+        data = {table: [dict(r) for r in conn.execute(f"SELECT * FROM {table}")] for table in demo.TABLES}
+    snapshot = tmp_path / "snapshot.json"
+    snapshot.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(demo, "SNAPSHOT", snapshot)
+
+    client.post("/api/reset")
+    tickets = client.get("/api/tickets", params={"technician": SAM}).json()
+    assert [(t["id"], t["pending"], t["assignee"]) for t in tickets] == [("T-1001", 1, SAM)]
+    assert tools.lookup_user(TOM)["account"]["status"] == "locked"  # environment is freshly seeded
+    assert client.get("/api/tickets/T-1001", params={"technician": SAM}).json()["approvals"][0]["status"] == "pending"
+
+
+def test_ticket_limits(monkeypatch):
+    limiter = api.TicketLimiter(per_day=3, per_visitor_per_hour=2)
+    assert limiter.allow("a") is None and limiter.allow("a") is None
+    assert "hourly" in limiter.allow("a")
+    assert limiter.allow("b") is None
+    assert "today" in limiter.allow("c")
+
+
+def test_create_ticket_returns_429_over_the_limit(client, monkeypatch):
+    limiter = api.TicketLimiter(per_day=1, per_visitor_per_hour=0)
+    limiter.allow("someone else")  # uses up today's only ticket
+    monkeypatch.setattr(api, "limiter", limiter)
+    response = client.post("/api/tickets", json={"sender": TOM, "subject": "printer", "body": "help"})
+    assert response.status_code == 429
+    assert "limit" in response.json()["detail"]
+
+
+def test_health(client):
+    assert client.get("/api/health").json() == {"ok": True}

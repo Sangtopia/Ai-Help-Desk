@@ -1,0 +1,22 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# Deploys the FastAPI app and web UI as one free web service. The SQLite demo data is rebuilt on every
+# start (seeded company + pre-worked demo tickets), so nothing needs a persistent disk.
+services:
+  - type: web
+    name: ai-help-desk
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && python -m helpdesk.kb build
+    startCommand: uvicorn helpdesk.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      - key: ANTHROPIC_API_KEY
+        sync: false  # Render asks for it when you create the Blueprint; it is never stored in the repo
+      # Each new ticket spends Anthropic credits (~$0.10), so cap usage of the public demo.
+      - key: MAX_TICKETS_PER_DAY
+        value: "20"
+      - key: MAX_TICKETS_PER_VISITOR_PER_HOUR
+        value: "5"

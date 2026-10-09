@@ -1,9 +1,11 @@
-anthropic>=1.12
-chromadb>=1.5
-fastapi>=0.143
-httpx  # for FastAPI's TestClient
-pydantic>=2
-pytest>=8
-python-dotenv>=1
-tzdata  # time zone data; Windows has no system copy
-uvicorn[standard]>=0.54
+anthropic==1.12.1
+chromadb==1.5.9
+fastapi==0.143.0
+pydantic==2.14.0
+python-dotenv==1.2.4
+tzdata==2026.5  # time zone data; Windows and slim Linux images have no system copy
+uvicorn[standard]==0.54.0
+
+# tests
+httpx==0.28.1  # for FastAPI's TestClient
+pytest==9.1.1

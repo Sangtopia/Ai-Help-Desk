@@ -4,16 +4,21 @@ Run with:  uvicorn helpdesk.api:app --reload
 Then open http://localhost:8000
 """
 
+import os
+import threading
+import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import anthropic
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from helpdesk import queue, tools
+from helpdesk import demo, queue, tools
 from helpdesk.agent import assign_ticket, decide_approval, escalate_ticket, handle_ticket, resolve_ticket
 from helpdesk.db import db_path, migrate
 from helpdesk.routing import can_access, route_unassigned
@@ -25,10 +30,47 @@ from helpdesk.seed import build_database
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 
+class TicketLimiter:
+    """Caps on new tickets for a public demo, since each one spends Anthropic credits. A cap of 0 is off."""
+
+    def __init__(self, per_day: int, per_visitor_per_hour: int):
+        self.per_day, self.per_visitor_per_hour = per_day, per_visitor_per_hour
+        self._lock = threading.Lock()
+        self._day, self._today = None, 0
+        self._recent: dict[str, deque] = defaultdict(deque)
+
+    def allow(self, visitor: str) -> str | None:
+        """Count a new ticket, or return why it isn't allowed."""
+        now, day = time.monotonic(), datetime.now(UTC).date()
+        with self._lock:
+            if day != self._day:
+                self._day, self._today = day, 0
+            if self.per_day and self._today >= self.per_day:
+                return "The demo has reached today's ticket limit. Please try again tomorrow, or browse the example tickets."
+            recent = self._recent[visitor]
+            while recent and now - recent[0] > 3600:
+                recent.popleft()
+            if self.per_visitor_per_hour and len(recent) >= self.per_visitor_per_hour:
+                return "You've reached this demo's hourly ticket limit. Please try again a bit later."
+            self._today += 1
+            recent.append(now)
+        return None
+
+
+limiter = TicketLimiter(int(os.environ.get("MAX_TICKETS_PER_DAY", "0")),
+                        int(os.environ.get("MAX_TICKETS_PER_VISITOR_PER_HOUR", "0")))
+
+
+def fresh_demo_data() -> None:
+    """A clean fake company plus the pre-worked demo tickets."""
+    build_database()
+    demo.load()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if not db_path().exists():
-        build_database()
+        fresh_demo_data()
     migrate()
     route_unassigned()
     if not (index_dir() / "chroma.sqlite3").exists():
@@ -105,10 +147,14 @@ def ticket_detail(ticket_id: str, technician: str) -> dict:
 
 
 @app.post("/api/tickets")
-def create_ticket(new: NewTicket) -> TicketResult:
+def create_ticket(new: NewTicket, request: Request) -> TicketResult:
     """Runs triage and the agent synchronously; takes roughly 20-60 seconds."""
     if new.sender not in {u["email"] for u in queue.list_users()}:
         raise HTTPException(400, f"Unknown sender {new.sender}")
+    # Behind a hosting proxy the visitor's address is the first X-Forwarded-For entry.
+    visitor = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or request.client.host
+    if refused := limiter.allow(visitor):
+        raise HTTPException(429, refused)
     ticket = Ticket(id=queue.next_ticket_id(), sender=new.sender, subject=new.subject.strip(), body=new.body.strip())
     try:
         return handle_ticket(ticket)
@@ -149,7 +195,12 @@ def rules() -> dict:
 
 @app.post("/api/reset")
 def reset() -> dict:
-    build_database()
+    fresh_demo_data()
+    return {"ok": True}
+
+
+@app.get("/api/health")
+def health() -> dict:
     return {"ok": True}
 
 
