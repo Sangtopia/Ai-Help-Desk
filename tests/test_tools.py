@@ -118,3 +118,58 @@ def test_escalate_to_tier2():
 
 def test_escalate_requires_summary():
     assert not tools.escalate_to_tier2("T-42", "   ")["ok"]
+
+
+def test_normal_signins_are_inside_usual_hours():
+    result = tools.check_signin_logs(1)
+    assert result["summary"]["locations"] == ["New York, US"]
+    assert not any(s["outside_usual_hours_home"] for s in result["signins"])
+
+
+def test_early_shift_worker_is_not_flagged():
+    signins = tools.check_signin_logs(8)["signins"]
+    assert signins and all(s["home_time"].endswith("06:16") for s in signins)
+    assert not any(s["outside_usual_hours_home"] for s in signins)
+
+
+def test_travelling_user_is_odd_at_home_but_normal_where_they_are():
+    lisbon = [s for s in tools.check_signin_logs(6)["signins"] if s["location"] == "Lisbon, PT"]
+    assert len(lisbon) == 3
+    assert all(s["outside_usual_hours_home"] and not s["outside_usual_hours_location"] for s in lisbon)
+    assert all(s["result"] == "success" and s["network"] == "residential" for s in lisbon)
+
+
+def test_compromised_user_shows_denied_pushes_from_hosting_network():
+    result = tools.check_signin_logs(2)
+    assert result["summary"]["mfa_denied"] == 3
+    assert result["summary"]["hosting_network_signins"] == 4
+    latest = result["signins"][0]
+    assert latest["location"] == "Singapore, SG"
+    assert latest["home_time"].endswith("04:14")
+    assert latest["result"] == "success"
+
+
+def test_locked_user_has_recent_failed_passwords():
+    assert tools.check_signin_logs(4)["summary"]["failed_password"] == 5
+
+
+def test_signin_logs_unknown_user():
+    assert not tools.check_signin_logs(999)["ok"]
+
+
+def test_mfa_status():
+    assert tools.check_mfa_status(1)["enrolled"]
+    assert not tools.check_mfa_status(12)["enrolled"]
+    assert not tools.check_mfa_status(999)["ok"]
+
+
+def test_block_sign_in_also_removes_vpn_access():
+    assert tools.block_sign_in(2, "4 AM sign-in from Singapore after denied Duo pushes")["ok"]
+    account = tools.lookup_user("marcus.reyes@brightline.example")["account"]
+    assert account["sign_in_blocked"] and not account["vpn_access"]
+    assert tools.block_sign_in(2, "again")["note"] == "Sign-in was already blocked"
+
+
+def test_block_sign_in_requires_reason_and_active_account():
+    assert not tools.block_sign_in(2, " ")["ok"]
+    assert not tools.block_sign_in(10, "probing")["ok"]

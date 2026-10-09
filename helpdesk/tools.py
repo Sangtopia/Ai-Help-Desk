@@ -9,7 +9,9 @@ directory or mail system would (e.g. disabled accounts can't be reset).
 
 import secrets
 import string
+from collections import Counter
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from helpdesk.db import session
 
@@ -36,11 +38,16 @@ def _temp_password(length: int = 14) -> str:
             return password
 
 
+def _hours_label(start: int, end: int) -> str:
+    return f"{start:02d}:00-{end:02d}:00"
+
+
 def lookup_user(email: str) -> dict:
     """Find a user by email, with account status, mailbox usage, and devices."""
     with session() as conn:
         user = conn.execute(
-            "SELECT u.*, a.status, a.failed_login_count, a.password_last_set, a.must_change_password "
+            "SELECT u.*, a.status, a.failed_login_count, a.password_last_set, a.must_change_password, "
+            "a.sign_in_blocked, a.vpn_access "
             "FROM users u JOIN accounts a ON a.user_id = u.id WHERE u.email = ?",
             (email.strip(),),
         ).fetchone()
@@ -61,12 +68,16 @@ def lookup_user(email: str) -> dict:
             "department": user["department"],
             "title": user["title"],
             "is_vip": bool(user["is_vip"]),
+            "timezone": user["timezone"],
+            "usual_hours": _hours_label(user["work_start"], user["work_end"]),
         },
         "account": {
             "status": user["status"],
             "failed_login_count": user["failed_login_count"],
             "password_last_set": user["password_last_set"],
             "must_change_password": bool(user["must_change_password"]),
+            "sign_in_blocked": bool(user["sign_in_blocked"]),
+            "vpn_access": bool(user["vpn_access"]),
         },
         "mailbox": {
             "quota_mb": mailbox["quota_mb"],
@@ -189,6 +200,105 @@ def check_device_status(hostname: str) -> dict:
             warnings.append(f"Low disk space: {percent_free}% free")
     result["warnings"] = warnings
     return result
+
+
+def check_signin_logs(user_id: int, days: int = 14) -> dict:
+    """Recent sign-ins, with each one shown in the user's home time and the local time where it happened.
+
+    The tool reports facts and simple flags; deciding whether a pattern means travel or
+    compromise is left to the agent (and to a human for anything risky).
+    """
+    since = (_now() - timedelta(days=days)).isoformat(timespec="seconds")
+    with session() as conn:
+        user = conn.execute("SELECT timezone, work_start, work_end FROM users WHERE id = ?", (user_id,)).fetchone()
+        if user is None:
+            return _error(f"No user with user_id {user_id}")
+        rows = conn.execute(
+            "SELECT * FROM signins WHERE user_id = ? AND occurred_at >= ? ORDER BY occurred_at DESC",
+            (user_id, since),
+        ).fetchall()
+
+    home_tz = ZoneInfo(user["timezone"])
+
+    def in_hours(dt: datetime) -> bool:
+        return user["work_start"] <= dt.hour < user["work_end"]
+
+    signins = []
+    for row in rows:
+        at = datetime.fromisoformat(row["occurred_at"])
+        home_time = at.astimezone(home_tz)
+        location_time = at.astimezone(ZoneInfo(row["timezone"]))
+        signins.append({
+            "occurred_at": row["occurred_at"],
+            "home_time": home_time.strftime("%a %H:%M"),
+            "location_time": location_time.strftime("%a %H:%M"),
+            "location": f"{row['city']}, {row['country']}",
+            "app": row["app"],
+            "ip": row["ip"],
+            "network": row["network"],
+            "result": row["result"],
+            "mfa": row["mfa"],
+            "outside_usual_hours_home": not in_hours(home_time),
+            "outside_usual_hours_location": not in_hours(location_time),
+        })
+
+    results = Counter(s["result"] for s in signins)
+    return {
+        "ok": True,
+        "user_id": user_id,
+        "home_timezone": user["timezone"],
+        "usual_hours": _hours_label(user["work_start"], user["work_end"]),
+        "summary": {
+            "total": len(signins),
+            "failed_password": results["failed_password"],
+            "mfa_denied": results["mfa_denied"],
+            "locations": sorted({s["location"] for s in signins}),
+            "hosting_network_signins": sum(s["network"] == "hosting" for s in signins),
+        },
+        "signins": signins,
+    }
+
+
+def check_mfa_status(user_id: int) -> dict:
+    """Whether the user is enrolled in Duo MFA, and on which device."""
+    with session() as conn:
+        mfa = conn.execute("SELECT * FROM mfa WHERE user_id = ?", (user_id,)).fetchone()
+    if mfa is None:
+        return _error(f"No user with user_id {user_id}")
+    return {
+        "ok": True,
+        "user_id": user_id,
+        "enrolled": bool(mfa["enrolled"]),
+        "method": mfa["method"],
+        "device": mfa["device"],
+        "enrolled_at": mfa["enrolled_at"],
+    }
+
+
+def block_sign_in(user_id: int, reason: str) -> dict:
+    """Block all sign-ins and VPN access for a possibly compromised account."""
+    if not reason.strip():
+        return _error("A reason is required to block sign-in")
+    with session() as conn:
+        account = conn.execute(
+            "SELECT status, sign_in_blocked FROM accounts WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if account is None:
+            return _error(f"No account for user_id {user_id}")
+        if account["status"] == "disabled":
+            return _error("Account is already disabled")
+        if account["sign_in_blocked"]:
+            return {"ok": True, "user_id": user_id, "note": "Sign-in was already blocked"}
+        conn.execute("UPDATE accounts SET sign_in_blocked = 1, vpn_access = 0 WHERE user_id = ?", (user_id,))
+
+    return {
+        "ok": True,
+        "user_id": user_id,
+        "sign_in_blocked": True,
+        "vpn_access": False,
+        "reason": reason.strip(),
+        "note": "Unblocking requires Tier 2 after the user's identity is confirmed through a known contact method",
+    }
 
 
 def escalate_to_tier2(ticket_id: str, summary: str) -> dict:

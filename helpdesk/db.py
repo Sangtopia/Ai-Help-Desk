@@ -14,7 +14,10 @@ CREATE TABLE IF NOT EXISTS users (
     email       TEXT NOT NULL UNIQUE COLLATE NOCASE,
     department  TEXT NOT NULL,
     title       TEXT NOT NULL,
-    is_vip      INTEGER NOT NULL DEFAULT 0
+    is_vip      INTEGER NOT NULL DEFAULT 0,
+    timezone    TEXT NOT NULL,
+    work_start  INTEGER NOT NULL,
+    work_end    INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
@@ -22,7 +25,31 @@ CREATE TABLE IF NOT EXISTS accounts (
     status                TEXT NOT NULL CHECK (status IN ('active', 'locked', 'disabled')),
     failed_login_count    INTEGER NOT NULL DEFAULT 0,
     password_last_set     TEXT NOT NULL,
-    must_change_password  INTEGER NOT NULL DEFAULT 0
+    must_change_password  INTEGER NOT NULL DEFAULT 0,
+    sign_in_blocked       INTEGER NOT NULL DEFAULT 0,
+    vpn_access            INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS mfa (
+    user_id      INTEGER PRIMARY KEY REFERENCES users(id),
+    enrolled     INTEGER NOT NULL,
+    method       TEXT,
+    device       TEXT,
+    enrolled_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS signins (
+    id           INTEGER PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id),
+    occurred_at  TEXT NOT NULL,
+    app          TEXT NOT NULL CHECK (app IN ('vpn', 'm365')),
+    ip           TEXT NOT NULL,
+    network      TEXT NOT NULL CHECK (network IN ('corporate', 'residential', 'mobile', 'hosting')),
+    city         TEXT NOT NULL,
+    country      TEXT NOT NULL,
+    timezone     TEXT NOT NULL,
+    result       TEXT NOT NULL CHECK (result IN ('success', 'failed_password', 'mfa_denied')),
+    mfa          TEXT NOT NULL CHECK (mfa IN ('duo_push', 'none'))
 );
 
 CREATE TABLE IF NOT EXISTS mailboxes (
