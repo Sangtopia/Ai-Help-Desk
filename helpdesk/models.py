@@ -43,3 +43,26 @@ class Triage(BaseModel):
     confidence: Literal["high", "medium", "low"] = Field(
         description="How confident the category and priority are; low when the ticket is too vague to tell"
     )
+
+
+class Resolution(BaseModel):
+    """The agent's final answer for a ticket."""
+
+    outcome: Literal["resolved", "pending_approval", "escalated", "needs_user_info"] = Field(
+        description="resolved: fixed or fully answered now. pending_approval: a fix is queued for a technician. "
+        "escalated: handed to Tier 2. needs_user_info: waiting on the user for details."
+    )
+    reply_to_user: str = Field(description="Message to send the user. Never claim a queued action has already run.")
+    internal_note: str = Field(description="For the technician: what was checked, what was found, what was done")
+    kb_articles: list[str] = Field(description="Ids of the knowledge base articles used, e.g. KB-001")
+    confidence: Literal["high", "medium", "low"]
+
+
+class TicketResult(BaseModel):
+    ticket_id: str
+    status: str
+    triage: Triage
+    resolution: Resolution
+    approval_ids: list[int]
+    escalated: bool
+    injection_signals: list[str]

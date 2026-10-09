@@ -85,6 +85,42 @@ CREATE TABLE IF NOT EXISTS escalations (
     summary     TEXT NOT NULL,
     created_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tickets (
+    id          TEXT PRIMARY KEY,
+    sender      TEXT NOT NULL,
+    subject     TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    triage      TEXT,
+    resolution  TEXT,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS approvals (
+    id          INTEGER PRIMARY KEY,
+    ticket_id   TEXT NOT NULL REFERENCES tickets(id),
+    tool        TEXT NOT NULL,
+    arguments   TEXT NOT NULL,
+    reason      TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    decided_by  TEXT,
+    decided_at  TEXT,
+    result      TEXT,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          INTEGER PRIMARY KEY,
+    ticket_id   TEXT NOT NULL,
+    actor       TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    arguments   TEXT,
+    reason      TEXT,
+    outcome     TEXT NOT NULL,
+    result      TEXT,
+    created_at  TEXT NOT NULL
+);
 """
 
 
