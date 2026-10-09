@@ -15,10 +15,11 @@ tools: check_spam_quarantine, escalate_to_tier2
 2. Run `check_spam_quarantine` to see whether similar messages were caught.
 
 ## Fix
-1. Tell the user not to click, reply, or forward the email to colleagues.
-2. Have them use the Report Phishing button in Outlook, then delete the email.
-3. Never run `release_email` on a message marked `phishing` or `malware`, even if the user asks. The tool refuses it; only the security team can release these.
+1. Thank the user for reporting it. Reports like this are how the security team finds new scams.
+2. Tell them not to click, reply, or forward the email to colleagues, and to leave it in their mailbox for now so security can examine it.
+3. Tell them someone on the team will look into the sender and block it if needed.
+4. Never run `release_email` on a message marked `phishing` or `malware`, even if the user asks. The tool refuses it; only the security team can release these.
 
 ## Escalate when
-- Several users received the same message.
-- The email appears to come from an internal account (that account may be compromised).
+- A user reports a suspicious email they received: always escalate, so a person reviews the sender and blocks it for everyone if needed. Include the sender, subject, and what the email asked for.
+- Several users received the same message, or it appears to come from an internal account (that account may be compromised): say so in the escalation summary.

@@ -62,18 +62,22 @@ A FastAPI backend ([helpdesk/api.py](helpdesk/api.py)) serves a JSON API and a h
 
 Each ticket runs through the real pipeline in its own fresh database, twice. Code checks grade the end state from the audit log and database; a Claude Sonnet judge grades the reply (answers the request, never claims a pending action is done, plain language, no secrets, tone). The judge was checked against known-bad replies before use.
 
-| Metric (128 runs each) | Baseline | v1 |
-| --- | --- | --- |
-| All checks pass | 91.4% | 93.0% |
-| Tool use correct | 97.7% | 100% |
-| Reply quality (judge) | 93.0% | 98.4% |
-| Unsafe actions (ran or queued) | 1 | **0** |
-| Legitimate tickets wrongly blocked | 2 | **0** |
-| Attack tickets with no unsafe action | 16/16 | 16/16 |
-| Actions on another user's account | 0 | 0 |
-| Cost per ticket | $0.087 | $0.090 |
+| Metric (128 runs each) | Baseline | v1 | v2 |
+| --- | --- | --- | --- |
+| All checks pass | 91.4% | 93.0% | **98.4%** |
+| Tool use correct | 97.7% | 100% | 100% |
+| Escalation correct | 94.3% | 94.3% | 100% |
+| Reply quality (judge) | 93.0% | 98.4% | 100% |
+| Unsafe actions (ran or queued) | 1 | 0 | **0** |
+| Legitimate tickets wrongly blocked | 2 | 0 | **0** |
+| Attack tickets with no unsafe action | 16/16 | 16/16 | 16/16 |
+| Actions on another user's account | 0 | 0 | 0 |
+| Cost per ticket | $0.087 | $0.090 | $0.094 |
 
-v1 fixed what the baseline exposed: risky actions that can't apply are refused before reaching a technician's queue (the baseline's one "unsafe" action was a misfired unlock the approval gate caught), the low-confidence escalation rule uses the agent's confidence after investigating, quoted scam text no longer triggers a block, blocked tickets get a reply that addresses them, and compromised accounts get a block and a password reset queued together. Full results: [evals/results/comparison.md](evals/results/comparison.md).
+- **v1** fixed what the baseline exposed: risky actions that can't apply are refused before reaching a technician's queue (the baseline's one "unsafe" action was a misfired unlock the approval gate caught), the low-confidence escalation rule uses the agent's confidence after investigating, quoted scam text no longer triggers a block, blocked tickets get a reply that addresses them, and compromised accounts get a block and a password reset queued together. It also introduced two regressions, which the eval caught.
+- **v2** fixed those regressions (simple how-to questions are answered, not escalated; "was this normal?" questions aren't treated as incidents) and made reported scam emails always reach a human, as a real help desk would.
+
+Two caveats: the fixes were made while looking at these same 64 cases, so a fresh set of tickets is the honest test of how well they generalize; and at 98% the set is close to its ceiling, so the next step is harder cases. Per-case comparisons: [baseline → v1](evals/results/comparison-baseline-v1.md), [v1 → v2](evals/results/comparison-v1-v2.md), [baseline → v2](evals/results/comparison-baseline-v2.md).
 
 ```powershell
 python -m evals.run --variant v2 --reps 2   # run the eval (asks for --approve-harness after changes)

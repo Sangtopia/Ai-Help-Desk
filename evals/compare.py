@@ -1,4 +1,4 @@
-"""Compare two eval variants case by case and write evals/results/comparison.md.
+"""Compare two eval variants case by case and write evals/results/comparison-<before>-<after>.md.
 
 Run with:  python -m evals.compare baseline v1
 """
@@ -62,7 +62,7 @@ def compare(before: str, after: str) -> str:
             broke.append(f"- {case_id}: all checks {ca:.0%} -> {cb:.0%}, reply {ra:.0%} -> {rb:.0%}")
     lines += ["", f"## Improved ({len(fixed)} cases)", "", *fixed, "", f"## Got worse ({len(broke)} cases)", "", *broke]
     text = "\n".join(lines) + "\n"
-    (RESULTS / "comparison.md").write_text(text, encoding="utf-8")
+    (RESULTS / f"comparison-{before}-{after}.md").write_text(text, encoding="utf-8")
     return text
 
 
