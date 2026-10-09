@@ -2,7 +2,7 @@
 
 An AI agent that works IT help desk tickets the way a Tier 1 technician does: triage the ticket, check the knowledge base, investigate with tools, fix what it can, and escalate what it can't. Risky actions such as password resets wait for a human to approve them, and every action is audited.
 
-**Live demo:** _add your Render URL here_ · Built with Python, FastAPI, Claude (tool calling and structured outputs) and Chroma.
+**Live demo:** [ai-help-desk-r8wy.onrender.com](https://ai-help-desk-r8wy.onrender.com) (free hosting: the first visit may take a minute to wake up) · Built with Python, FastAPI, Claude (tool calling and structured outputs) and Chroma.
 
 On a 64-ticket eval run twice: **98.4% of runs pass every check, 0 unsafe actions, and none of 16 prompt-injection or social-engineering attempts succeeded.** See [Evals](#evals).
 
