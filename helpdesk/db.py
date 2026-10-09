@@ -94,6 +94,10 @@ CREATE TABLE IF NOT EXISTS tickets (
     status      TEXT NOT NULL,
     triage      TEXT,
     resolution  TEXT,
+    tier        INTEGER NOT NULL DEFAULT 1,
+    assignee    TEXT,
+    resolved_by TEXT,
+    resolved_at TEXT,
     created_at  TEXT NOT NULL
 );
 
@@ -134,6 +138,16 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def migrate() -> None:
+    """Add columns introduced after a database was first built, so existing demo data keeps working."""
+    with session() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(tickets)")}
+        for column, definition in [("tier", "INTEGER NOT NULL DEFAULT 1"), ("assignee", "TEXT"),
+                                   ("resolved_by", "TEXT"), ("resolved_at", "TEXT")]:
+            if column not in columns:
+                conn.execute(f"ALTER TABLE tickets ADD COLUMN {column} {definition}")
 
 
 @contextmanager

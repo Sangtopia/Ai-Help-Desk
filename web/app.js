@@ -28,6 +28,8 @@ const TOOL_LABEL = {
 };
 
 const VIEWS = {
+  mine: { label: "My tickets", match: t => t.assignee === getTechnician() && t.status !== "resolved" },
+  unassigned: { label: "Unassigned", match: t => !t.assignee && t.status !== "resolved" },
   approval: { label: "Needs approval", color: "#e8a317", match: t => t.pending > 0 },
   security: { label: "Security", color: "#e5484d", match: t => t.triage?.category === "security" },
   blocked: { label: "Blocked", color: "#b42318", match: t => t.status === "blocked" },
@@ -37,7 +39,7 @@ const VIEWS = {
   needs_user_info: { label: "Waiting on user", match: t => t.status === "needs_user_info" },
   needs_technician: { label: "Needs technician", match: t => t.status === "needs_technician" },
 };
-const VIEW_GROUPS = [["Views", ["approval", "security", "blocked"]],
+const VIEW_GROUPS = [["Views", ["mine", "unassigned", "approval", "security", "blocked"]],
                      ["Tickets", ["all", "escalated", "resolved", "needs_user_info", "needs_technician"]]];
 
 const EXAMPLES = [
@@ -57,7 +59,9 @@ const EXAMPLES = [
    "I just got my laptop and VPN keeps asking for Duo but I never set Duo up. What do I do?"],
 ];
 
-const state = { tickets: [], users: [], search: "" };
+const AI_AGENT = "AI agent";
+const TIER_NAMES = { 1: "Tier 1", 2: "Tier 2", 3: "Security" };
+const state = { tickets: [], users: [], technicians: [], search: "" };
 const $ = sel => document.querySelector(sel);
 
 // ---------- helpers ----------
@@ -112,11 +116,22 @@ function localTime(tz) {
 }
 
 function getTechnician() {
-  try { return localStorage.getItem("technician") || "priya.nair"; } catch { return "priya.nair"; }
+  let saved = null;
+  try { saved = localStorage.getItem("technician"); } catch { /* storage unavailable */ }
+  const names = state.technicians.map(t => t.name);
+  return names.includes(saved) ? saved : (names[0] || "");
 }
 function setTechnician(name) {
   try { localStorage.setItem("technician", name); } catch { /* storage unavailable */ }
-  $("#tech-avatar").textContent = (name || "?")[0].toUpperCase();
+  const el = $("#tech-avatar");
+  el.textContent = (name || "?")[0].toUpperCase();
+  el.title = `Signed in as ${name}`;
+}
+
+function assigneeCell(name) {
+  if (!name) return `<span class="assignee muted"><span class="avatar sm empty-avatar"></span>Unassigned</span>`;
+  if (name === AI_AGENT) return `<span class="assignee"><span class="avatar sm bot-avatar">${icon("i-bot")}</span>AI agent</span>`;
+  return `<span class="assignee">${avatar(name, "sm")}${esc(name)}</span>`;
 }
 
 function toast(message) {
@@ -173,10 +188,12 @@ function renderSidebar(section, activeView) {
     ${groups}
     <div class="tech-box">
       <label for="tech-name">Signed in as technician</label>
-      <input id="tech-name" value="${esc(getTechnician())}" autocomplete="off">
+      <select id="tech-name">
+        ${state.technicians.map(t => `<option value="${esc(t.name)}" ${t.name === getTechnician() ? "selected" : ""}>${esc(t.name)} · ${esc(t.role)}</option>`).join("")}
+      </select>
     </div>`;
   $("#sidebar-new").onclick = openNewTicket;
-  $("#tech-name").oninput = e => setTechnician(e.target.value.trim());
+  $("#tech-name").onchange = e => { setTechnician(e.target.value); refresh(); };
 }
 
 // ---------- inbox list ----------
@@ -202,7 +219,7 @@ function renderInbox(viewKey) {
       ${rows.length ? `
       <table class="tickets">
         <thead><tr>
-          <th>Customer</th><th>Subject</th><th>Priority</th><th>Category</th><th>Status</th><th>Last activity</th>
+          <th>Customer</th><th>Subject</th><th>Priority</th><th>Category</th><th>Assignee</th><th>Status</th><th>Last activity</th>
         </tr></thead>
         <tbody>
           ${rows.map(t => `
@@ -214,6 +231,7 @@ function renderInbox(viewKey) {
                 <div class="subject-summary">${esc(t.triage?.summary || "")}</div></td>
               <td>${priorityCell(t.triage?.priority)}</td>
               <td><span class="tag">${esc(CATEGORY[t.triage?.category] || "-")}</span></td>
+              <td>${assigneeCell(t.assignee)}</td>
               <td>${statusPill(t.status)}${t.pending ? `<span class="badge-count">${t.pending}</span>` : ""}</td>
               <td class="muted">${esc(timeAgo(t.last_activity))}</td>
             </tr>`).join("")}
@@ -313,10 +331,26 @@ function renderThread(data) {
         </div></div>`);
   }
 
-  audit.filter(e => e.action === "escalate_to_tier2" && e.outcome === "executed").forEach(e => {
-    const who = e.actor === "agent" ? "the agent" : "an escalation rule";
-    parts.push(`<div class="event">${icon("i-arrow-up-right")} Escalated to <b>Tier 2</b> by ${esc(who)} · ${esc(clock(e.created_at))}</div>`);
+  const who = actor => actor.startsWith("technician:") ? actor.slice("technician:".length) : actor;
+  audit.forEach(e => {
+    const at = esc(clock(e.created_at));
+    const args = e.arguments ? JSON.parse(e.arguments) : {};
+    if (e.action === "escalate_to_tier2" && e.outcome === "executed") {
+      const by = e.actor === "agent" ? "the agent" : "an escalation rule";
+      parts.push(`<div class="event">${icon("i-arrow-up-right")} Escalated to <b>Tier 2</b> by ${esc(by)} · ${at}</div>`);
+    } else if (e.action === "auto_assign") {
+      const by = e.actor === "system" ? "Auto-assigned" : `${esc(who(e.actor))} escalated it ·`;
+      parts.push(`<div class="event">${by} to <b>${esc(args.assignee)}</b> (${esc(TIER_NAMES[args.tier])}) · ${at}</div>`);
+    } else if (e.action === "assign") {
+      const target = args.assignee ? `<b>${esc(args.assignee)}</b>` : "nobody";
+      parts.push(`<div class="event">${esc(who(e.actor))} assigned the ticket to ${target} · ${at}</div>`);
+    } else if (e.action === "resolve") {
+      parts.push(`<div class="event">${icon("i-check")} Resolved by <b>${esc(who(e.actor))}</b> · ${at}</div>`);
+    }
   });
+  if (ticket.resolved_by === AI_AGENT) {
+    parts.push(`<div class="event">${icon("i-check")} Resolved by <b>AI agent</b> · ${esc(clock(ticket.resolved_at))}</div>`);
+  }
 
   approvals.forEach(a => parts.push(approvalCard(a)));
   return parts.join("");
@@ -348,6 +382,9 @@ function renderSide(data) {
       <dl class="kv">
         <dt>Ticket ID</dt><dd>${esc(ticket.id)}</dd>
         <dt>Status</dt><dd>${statusPill(ticket.status)}</dd>
+        <dt>Assignee</dt><dd>${assigneeCell(ticket.assignee)}</dd>
+        <dt>Tier</dt><dd><span class="tag">${esc(TIER_NAMES[ticket.tier] || "-")}</span></dd>
+        ${ticket.resolved_by ? `<dt>Resolved by</dt><dd>${esc(ticket.resolved_by)}<div class="small muted">${esc(clock(ticket.resolved_at))}</div></dd>` : ""}
         <dt>Priority</dt><dd>${priorityCell(triage.priority)}</dd>
         <dt>Category</dt><dd>${esc(CATEGORY[triage.category] || "-")}</dd>
         <dt>User blocked</dt><dd>${triage.user_blocked ? "Yes" : "No"}</dd>
@@ -362,20 +399,30 @@ function renderSide(data) {
 
 async function renderTicket(id) {
   let data;
-  try { data = await api(`/api/tickets/${encodeURIComponent(id)}`); }
+  const me = getTechnician();
+  try { data = await api(`/api/tickets/${encodeURIComponent(id)}?technician=${encodeURIComponent(me)}`); }
   catch (error) {
-    $("#main").innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    $("#main").innerHTML = `<div class="empty">${esc(error.message)}.<br>
+      <span class="small">Tickets are only visible to technicians at their tier or above.</span>
+      <br><br><a class="btn" href="#/inbox">Back to inbox</a></div>`;
     return;
   }
   const ids = state.tickets.map(t => t.id);
   const index = ids.indexOf(id);
+  const t = data.ticket;
+  const myLevel = state.technicians.find(x => x.name === me)?.level || 0;
+  const actions = [
+    t.assignee !== me && t.status !== "resolved" ? `<button class="btn" data-action="assign">Assign to me</button>` : "",
+    t.tier < 3 && t.status !== "resolved" ? `<button class="btn" data-action="escalate" title="Move to ${esc(TIER_NAMES[t.tier + 1])}">${icon("i-arrow-up-right")} Escalate</button>` : "",
+    t.status !== "resolved" ? `<button class="btn btn-primary" data-action="resolve" ${data.approvals.some(a => a.status === "pending") ? `disabled title="Approve or reject pending actions first"` : ""}>${icon("i-check")} Mark resolved</button>` : "",
+  ].join("");
   $("#main").innerHTML = `
     <div class="detail">
       <section class="thread-col">
         <div class="detail-head">
           <a class="icon-btn" href="#/inbox" title="Back to inbox" aria-label="Back to inbox">${icon("i-back")}</a>
-          <h2>${esc(data.ticket.subject)}</h2>
-          ${statusPill(data.ticket.status)}
+          <h2>${esc(t.subject)}</h2>
+          <div class="head-actions">${actions}</div>
           <a class="icon-btn" ${index > 0 ? `href="#/ticket/${esc(ids[index - 1])}"` : ""} title="Newer" aria-label="Newer ticket">‹</a>
           <a class="icon-btn" ${index >= 0 && index < ids.length - 1 ? `href="#/ticket/${esc(ids[index + 1])}"` : ""} title="Older" aria-label="Older ticket">›</a>
         </div>
@@ -383,6 +430,24 @@ async function renderTicket(id) {
       </section>
       <aside class="side">${renderSide(data)}</aside>
     </div>`;
+
+  document.querySelectorAll("[data-action]").forEach(button => {
+    button.onclick = async () => {
+      const action = button.dataset.action;
+      button.disabled = true;
+      try {
+        if (action === "assign") {
+          await api(`/api/tickets/${encodeURIComponent(id)}/assign`, { method: "POST", body: { assignee: me, technician: me } });
+          toast(`Assigned to you`);
+        } else {
+          const result = await api(`/api/tickets/${encodeURIComponent(id)}/${action}`, { method: "POST", body: { technician: me } });
+          toast(action === "resolve" ? "Ticket resolved" : `Escalated to ${TIER_NAMES[result.tier]} · ${result.assignee}`);
+          if (action === "escalate" && result.tier > myLevel) location.hash = "#/inbox";
+        }
+      } catch (error) { toast(error.message); }
+      await refresh();
+    };
+  });
 
   document.querySelectorAll("[data-approve],[data-reject]").forEach(button => {
     button.onclick = async () => {
@@ -409,6 +474,7 @@ async function renderRules() {
     ["i-id", "Identity check", "Resets and unlocks only for the ticket sender's own account; email releases only from their own mailbox. Violations are refused, never queued.", stats.identity_check, ["action", "actions"], "refused"],
     ["i-shield", "Prompt-injection block", "Tickets with instructions aimed at the AI, or flagged as social engineering by triage, are blocked and sent to security before the agent sees them.", stats.injection_block, ["ticket", "tickets"], "blocked"],
     ["i-arrow-up-right", "Escalation rules", "P1 tickets and anything handled with low confidence always reach Tier 2 with a written summary, even if the agent didn't escalate.", stats.escalation_rules, ["escalation", "escalations"], "forced"],
+    ["i-id", "Tier routing", "Tickets needing a person are auto-assigned by code: routine fixes to Tier 1, escalations and sign-in blocks to Tier 2, blocked and P1 security tickets to the IT Manager. Each technician sees their tier and below.", stats.tier_routing, ["ticket", "tickets"], "routed"],
     ["i-list", "Audit log", "Every action by the agent, the system or a technician is recorded with who, what, when, why and the outcome.", stats.audit_log, ["entry", "entries"], "recorded"],
   ].map(([ic, name, text, count, [one, many], verb]) => [ic, name, text, `${count} ${count === 1 ? one : many} ${verb}`]);
   $("#main").innerHTML = `
@@ -477,7 +543,7 @@ function setupNewTicket() {
 // ---------- routing ----------
 
 async function refresh() {
-  state.tickets = await api("/api/tickets");
+  state.tickets = await api(`/api/tickets?technician=${encodeURIComponent(getTechnician())}`);
   await route();
 }
 
@@ -498,7 +564,6 @@ async function route() {
 }
 
 async function start() {
-  setTechnician(getTechnician());
   setupNewTicket();
   $("#reset").onclick = async () => {
     if (!confirm("Reset all demo data? Tickets, approvals and the audit log will be cleared.")) return;
@@ -509,7 +574,8 @@ async function start() {
     await refresh();
   };
   window.addEventListener("hashchange", route);
-  state.users = await api("/api/users");
+  [state.users, state.technicians] = await Promise.all([api("/api/users"), api("/api/technicians")]);
+  setTechnician(getTechnician());
   await refresh();
 }
 

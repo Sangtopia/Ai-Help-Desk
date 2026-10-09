@@ -24,6 +24,8 @@ from helpdesk.guardrails import (
 from helpdesk.kb import search_kb
 from helpdesk.llm import FALLBACK_BETA, MODEL, get_client
 from helpdesk.models import Resolution, Ticket, TicketResult, Triage
+from helpdesk.queue import AI_AGENT, TIER_NAMES, technician_level
+from helpdesk.routing import assign_to_tier, can_access, route_ticket
 from helpdesk.triage import triage
 
 MAX_TURNS = 15
@@ -266,6 +268,7 @@ def handle_ticket(ticket: Ticket, client: anthropic.Anthropic | None = None) -> 
                                 internal_note=f"Blocked automatically. {why}.", kb_articles=["KB-030"],
                                 confidence="high")
         _update_ticket(ticket.id, status="blocked", resolution=resolution.model_dump_json())
+        route_ticket(ticket.id)
         return TicketResult(ticket_id=ticket.id, status="blocked", triage=triage_result, resolution=resolution,
                             approval_ids=[], escalated=True, injection_signals=signals)
 
@@ -299,6 +302,13 @@ def handle_ticket(ticket: Ticket, client: anthropic.Anthropic | None = None) -> 
     else:
         status = resolution.outcome
     _update_ticket(ticket.id, status=status, resolution=resolution.model_dump_json())
+    # Tickets the agent finished on its own are owned by the agent; anything else is routed to a technician tier.
+    if status == "resolved":
+        _update_ticket(ticket.id, assignee=AI_AGENT, resolved_by=AI_AGENT, resolved_at=_now())
+    elif status == "needs_user_info":
+        _update_ticket(ticket.id, assignee=AI_AGENT)
+    else:
+        route_ticket(ticket.id)
     return TicketResult(ticket_id=ticket.id, status=status, triage=triage_result, resolution=resolution,
                         approval_ids=pending, escalated=escalated, injection_signals=signals)
 
@@ -310,6 +320,8 @@ def decide_approval(approval_id: int, technician: str, approve: bool) -> dict:
                            "WHERE a.id = ?", (approval_id,)).fetchone()
     if row is None:
         return {"ok": False, "error": f"No approval with id {approval_id}"}
+    if denied := _access_error(technician, row["ticket_id"]):
+        return {"ok": False, "error": denied}
     if row["status"] != "pending":
         return {"ok": False, "error": f"Approval {approval_id} was already {row['status']}"}
 
@@ -330,15 +342,84 @@ def decide_approval(approval_id: int, technician: str, approve: bool) -> dict:
         )
     audit(row["ticket_id"], actor, row["tool"], outcome, args, row["reason"], result)
 
+    # Whoever decides an action on an unowned ticket takes ownership of it.
+    if _ticket_field(row["ticket_id"], "assignee") in (None, AI_AGENT):
+        assign_ticket(row["ticket_id"], technician, technician)
+
     if not _approval_ids(row["ticket_id"]):
         if _approval_ids(row["ticket_id"], "rejected"):
-            final = "needs_technician"
+            _update_ticket(row["ticket_id"], status="needs_technician")
         elif _escalated(row["ticket_id"]):
-            final = "escalated"
+            _update_ticket(row["ticket_id"], status="escalated")
         else:
-            final = "resolved"
-        _update_ticket(row["ticket_id"], status=final)
+            _mark_resolved(row["ticket_id"], technician)
     return {"ok": True, "approval_id": approval_id, "status": status, "result": result}
+
+
+def _ticket_field(ticket_id: str, field: str):
+    with session() as conn:
+        row = conn.execute(f"SELECT {field} FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+    return row[field] if row else None
+
+
+def _mark_resolved(ticket_id: str, technician: str) -> None:
+    _update_ticket(ticket_id, status="resolved", resolved_by=technician, resolved_at=_now())
+    audit(ticket_id, f"technician:{technician}", "resolve", "executed")
+
+
+def _access_error(technician: str, ticket_id: str) -> str | None:
+    """Why this technician may not act on this ticket, or None if they may."""
+    tier = _ticket_field(ticket_id, "tier")
+    if tier is None:
+        return f"No ticket {ticket_id}"
+    if technician_level(technician) is None:
+        return f"Unknown technician {technician!r}"
+    if not can_access(technician, tier):
+        return f"Ticket {ticket_id} is a {TIER_NAMES[tier]} ticket; {technician} can't act on it"
+    return None
+
+
+def assign_ticket(ticket_id: str, assignee: str | None, technician: str) -> dict:
+    """Give a ticket to a technician (or unassign it with None). Both must be cleared for the ticket's tier."""
+    if denied := _access_error(technician, ticket_id):
+        return {"ok": False, "error": denied}
+    if assignee is not None and (denied := _access_error(assignee, ticket_id)):
+        return {"ok": False, "error": denied}
+    _update_ticket(ticket_id, assignee=assignee)
+    audit(ticket_id, f"technician:{technician}", "assign", "executed", {"assignee": assignee})
+    return {"ok": True, "ticket_id": ticket_id, "assignee": assignee}
+
+
+def escalate_ticket(ticket_id: str, technician: str) -> dict:
+    """Move a ticket up one tier and auto-assign it there."""
+    if denied := _access_error(technician, ticket_id):
+        return {"ok": False, "error": denied}
+    tier, status = _ticket_field(ticket_id, "tier"), _ticket_field(ticket_id, "status")
+    if status == "resolved":
+        return {"ok": False, "error": f"Ticket {ticket_id} is already resolved"}
+    if tier >= max(TIER_NAMES):
+        return {"ok": False, "error": f"Ticket {ticket_id} is already at the highest tier"}
+    tools.escalate_to_tier2(ticket_id, f"Escalated by {technician} to {TIER_NAMES[tier + 1]}")
+    if status not in ("pending_approval", "blocked"):
+        _update_ticket(ticket_id, status="escalated")
+    assignee = assign_to_tier(ticket_id, tier + 1, f"technician:{technician}",
+                              f"Escalated by {technician} to {TIER_NAMES[tier + 1]}")
+    return {"ok": True, "ticket_id": ticket_id, "tier": tier + 1, "assignee": assignee}
+
+
+def resolve_ticket(ticket_id: str, technician: str) -> dict:
+    """A technician closes a ticket. Queued actions must be approved or rejected first."""
+    if denied := _access_error(technician, ticket_id):
+        return {"ok": False, "error": denied}
+    status = _ticket_field(ticket_id, "status")
+    if status == "resolved":
+        return {"ok": False, "error": f"Ticket {ticket_id} is already resolved"}
+    if _approval_ids(ticket_id):
+        return {"ok": False, "error": "Approve or reject the pending actions before resolving this ticket"}
+    if _ticket_field(ticket_id, "assignee") in (None, AI_AGENT):
+        assign_ticket(ticket_id, technician, technician)
+    _mark_resolved(ticket_id, technician)
+    return {"ok": True, "ticket_id": ticket_id, "resolved_by": technician}
 
 
 DEMO_TICKETS = [

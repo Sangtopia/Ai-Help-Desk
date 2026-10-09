@@ -14,8 +14,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from helpdesk import queue, tools
-from helpdesk.agent import decide_approval, handle_ticket
-from helpdesk.db import db_path
+from helpdesk.agent import assign_ticket, decide_approval, escalate_ticket, handle_ticket, resolve_ticket
+from helpdesk.db import db_path, migrate
+from helpdesk.routing import can_access, route_unassigned
 from helpdesk.guardrails import get_audit_log
 from helpdesk.kb import build_index, index_dir
 from helpdesk.models import Ticket, TicketResult
@@ -28,6 +29,8 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 async def lifespan(_: FastAPI):
     if not db_path().exists():
         build_database()
+    migrate()
+    route_unassigned()
     if not (index_dir() / "chroma.sqlite3").exists():
         build_index()
     yield
@@ -44,7 +47,27 @@ class NewTicket(BaseModel):
 
 class Decision(BaseModel):
     approve: bool
-    technician: str = Field(min_length=1, max_length=100)
+    technician: str
+
+
+class Assignment(BaseModel):
+    assignee: str | None  # a technician's name, or None to unassign
+    technician: str  # who is making the change
+
+
+class TechnicianAction(BaseModel):
+    technician: str  # who is acting
+
+
+def require_technician(name: str) -> None:
+    if not queue.is_technician(name):
+        raise HTTPException(400, f"Unknown technician {name!r}")
+
+
+def check(result: dict) -> dict:
+    if not result["ok"]:
+        raise HTTPException(409, result["error"])
+    return result
 
 
 @app.get("/api/users")
@@ -52,16 +75,26 @@ def users() -> list[dict]:
     return queue.list_users()
 
 
+@app.get("/api/technicians")
+def technicians() -> list[dict]:
+    return queue.TECHNICIANS
+
+
 @app.get("/api/tickets")
-def tickets() -> list[dict]:
-    return queue.list_tickets()
+def tickets(technician: str) -> list[dict]:
+    """The tickets this technician may see: their tier and every tier below it."""
+    require_technician(technician)
+    return queue.list_tickets(max_tier=queue.technician_level(technician))
 
 
 @app.get("/api/tickets/{ticket_id}")
-def ticket_detail(ticket_id: str) -> dict:
+def ticket_detail(ticket_id: str, technician: str) -> dict:
+    require_technician(technician)
     ticket = queue.get_ticket(ticket_id)
     if ticket is None:
         raise HTTPException(404, f"No ticket {ticket_id}")
+    if not can_access(technician, ticket["tier"]):
+        raise HTTPException(403, f"{ticket_id} is a {queue.TIER_NAMES[ticket['tier']]} ticket")
     customer = tools.lookup_user(ticket["sender"])
     return {
         "ticket": ticket,
@@ -85,10 +118,28 @@ def create_ticket(new: NewTicket) -> TicketResult:
 
 @app.post("/api/approvals/{approval_id}")
 def decide(approval_id: int, decision: Decision) -> dict:
-    result = decide_approval(approval_id, decision.technician.strip(), decision.approve)
-    if not result["ok"]:
-        raise HTTPException(409, result["error"])
-    return result
+    require_technician(decision.technician)
+    return check(decide_approval(approval_id, decision.technician, decision.approve))
+
+
+@app.post("/api/tickets/{ticket_id}/assign")
+def assign(ticket_id: str, assignment: Assignment) -> dict:
+    require_technician(assignment.technician)
+    if assignment.assignee is not None:
+        require_technician(assignment.assignee)
+    return check(assign_ticket(ticket_id, assignment.assignee, assignment.technician))
+
+
+@app.post("/api/tickets/{ticket_id}/escalate")
+def escalate(ticket_id: str, body: TechnicianAction) -> dict:
+    require_technician(body.technician)
+    return check(escalate_ticket(ticket_id, body.technician))
+
+
+@app.post("/api/tickets/{ticket_id}/resolve")
+def resolve(ticket_id: str, body: TechnicianAction) -> dict:
+    require_technician(body.technician)
+    return check(resolve_ticket(ticket_id, body.technician))
 
 
 @app.get("/api/rules")

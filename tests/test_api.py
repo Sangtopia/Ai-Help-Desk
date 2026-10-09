@@ -37,12 +37,15 @@ def test_index_and_assets_are_served(client):
     assert client.get("/static/app.css").status_code == 200
 
 
+SAM = "Sam Ortiz"  # Tier 1
+
+
 def test_ticket_list_and_detail(client):
     locked_out_ticket()
-    tickets = client.get("/api/tickets").json()
-    assert [(t["id"], t["name"], t["pending"]) for t in tickets] == [("T-1001", "Tom Becker", 1)]
+    tickets = client.get("/api/tickets", params={"technician": SAM}).json()
+    assert [(t["id"], t["name"], t["pending"], t["assignee"]) for t in tickets] == [("T-1001", "Tom Becker", 1, SAM)]
 
-    detail = client.get("/api/tickets/T-1001").json()
+    detail = client.get("/api/tickets/T-1001", params={"technician": SAM}).json()
     assert detail["ticket"]["triage"]["priority"] == "P2"
     assert detail["customer"]["user"]["name"] == "Tom Becker"
     assert detail["approvals"][0]["tool"] == "unlock_account"
@@ -50,22 +53,27 @@ def test_ticket_list_and_detail(client):
 
 
 def test_unknown_ticket_is_404(client):
-    assert client.get("/api/tickets/T-9999").status_code == 404
+    assert client.get("/api/tickets/T-9999", params={"technician": SAM}).status_code == 404
+
+
+def test_listing_requires_a_known_technician(client):
+    assert client.get("/api/tickets", params={"technician": "mallory"}).status_code == 400
 
 
 def test_approve_through_api(client):
     approval_id = locked_out_ticket()
-    response = client.post(f"/api/approvals/{approval_id}", json={"approve": True, "technician": "priya"})
+    response = client.post(f"/api/approvals/{approval_id}", json={"approve": True, "technician": SAM})
     assert response.status_code == 200
     assert tools.lookup_user(TOM)["account"]["status"] == "active"
-    assert client.get("/api/tickets").json()[0]["status"] == "resolved"
+    ticket = client.get("/api/tickets", params={"technician": SAM}).json()[0]
+    assert (ticket["status"], ticket["resolved_by"]) == ("resolved", SAM)
     # Deciding twice is a conflict, not a second execution.
-    assert client.post(f"/api/approvals/{approval_id}", json={"approve": True, "technician": "priya"}).status_code == 409
+    assert client.post(f"/api/approvals/{approval_id}", json={"approve": True, "technician": SAM}).status_code == 409
 
 
-def test_approval_needs_a_technician_name(client):
+def test_approval_needs_a_known_technician(client):
     approval_id = locked_out_ticket()
-    assert client.post(f"/api/approvals/{approval_id}", json={"approve": True, "technician": ""}).status_code == 422
+    assert client.post(f"/api/approvals/{approval_id}", json={"approve": True, "technician": ""}).status_code == 400
 
 
 def test_create_ticket_rejects_unknown_sender(client):
@@ -94,4 +102,4 @@ def test_rules_count_guardrail_activity(client):
 def test_reset_clears_tickets(client):
     locked_out_ticket()
     client.post("/api/reset")
-    assert client.get("/api/tickets").json() == []
+    assert client.get("/api/tickets", params={"technician": SAM}).json() == []

@@ -52,6 +52,7 @@ A FastAPI backend ([helpdesk/api.py](helpdesk/api.py)) serves a JSON API and a h
 
 - **Inbox:** tickets with customer, subject, AI summary, priority, category and status, plus views for tickets needing approval, security tickets and blocked tickets. Search across all of them.
 - **Ticket:** the user's message, the triage result, the agent's investigation (every tool call and its reason), the reply sent to the user, an internal note for technicians, escalations, and Approve and Reject buttons for queued actions. A side panel shows the customer's account, local time, usual hours and devices.
+- **Ownership and tiers:** every ticket shows its assignee and who resolved it. Tickets the agent fixes on its own belong to "AI agent". Everything else is auto-assigned by code to the right tier: routine approvals to Tier 1, escalations and sign-in blocks to Tier 2, and blocked or P1 security tickets to the IT Manager. Technicians see and act on their own tier and below (enforced by the API), can take a ticket, escalate it a tier, or mark it resolved, and each change is audited.
 - **Guardrail rules:** each guardrail with how many times it has fired, counted from the audit log.
 - **New ticket:** submit as any demo user, or start from an example such as the prompt-injection attempt.
 

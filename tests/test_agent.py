@@ -107,11 +107,11 @@ def test_technician_approval_runs_the_action_and_is_audited():
     client = ScriptedClient(make_triage(), [[tool_call("unlock_account", user_id=4)], make_resolution()])
     approval_id = agent.handle_ticket(ticket, client).approval_ids[0]
 
-    decision = agent.decide_approval(approval_id, "priya", approve=True)
+    decision = agent.decide_approval(approval_id, "Sam Ortiz", approve=True)
     assert decision["status"] == "approved"
     assert tools.lookup_user(TOM)["account"]["status"] == "active"
-    assert ("technician:priya", "unlock_account", "executed") in actions("T-1")
-    assert not agent.decide_approval(approval_id, "priya", approve=True)["ok"]  # can't approve twice
+    assert ("technician:Sam Ortiz", "unlock_account", "executed") in actions("T-1")
+    assert not agent.decide_approval(approval_id, "Sam Ortiz", approve=True)["ok"]  # can't approve twice
 
 
 def test_rejected_action_never_runs():
@@ -119,9 +119,9 @@ def test_rejected_action_never_runs():
     client = ScriptedClient(make_triage(), [[tool_call("unlock_account", user_id=4)], make_resolution()])
     approval_id = agent.handle_ticket(ticket, client).approval_ids[0]
 
-    agent.decide_approval(approval_id, "priya", approve=False)
+    agent.decide_approval(approval_id, "Sam Ortiz", approve=False)
     assert tools.lookup_user(TOM)["account"]["status"] == "locked"
-    assert ("technician:priya", "unlock_account", "rejected") in actions("T-1")
+    assert ("technician:Sam Ortiz", "unlock_account", "rejected") in actions("T-1")
 
 
 def test_hijacked_agent_cannot_reset_someone_elses_password():
