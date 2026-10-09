@@ -3,7 +3,7 @@
 Every tool returns a JSON-serializable dict with an "ok" key, so the agent
 reads failures the same way it reads successes instead of handling exceptions.
 Approval gates, identity checks, and audit logging are layered on top of
-these in the agent (Stage 4); the tools themselves only enforce rules a real
+these in agent.py and guardrails.py; the tools themselves only enforce rules a real
 directory or mail system would (e.g. disabled accounts can't be reset).
 """
 

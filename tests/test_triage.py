@@ -1,5 +1,5 @@
 """Offline tests for the triage call. A fake client stands in for the API, so these cost nothing;
-accuracy against real tickets is measured by the evals in Stage 6."""
+accuracy against real tickets is measured by the eval suite in evals/."""
 
 from types import SimpleNamespace
 
