@@ -24,6 +24,10 @@ The sign-in data separates a travelling employee (logging in at 9 AM in Lisbon, 
 
 31 short how-to articles in [kb/articles](kb/articles), written from Tier 1 help desk experience. Each one lists symptoms, quick checks, fix steps, the tools the agent may use, and when to escalate. Articles are split into chunks by section, embedded with Chroma's built-in local model, and searched with `search_kb(query)`, which returns whole articles so the agent can cite them by id.
 
+## Triage
+
+Every ticket first goes through one Claude call with structured output, validated by a Pydantic model: category, priority (P1–P4), whether the user is blocked from working, a one-line summary, a social-engineering flag, and a confidence level. The ticket is passed in as untrusted data, so instructions written inside it are classified, never followed. Priority is judged by impact, not tone: an angry ticket about a slow laptop stays P3.
+
 ## Setup
 
 ```powershell
@@ -34,5 +38,7 @@ python -m helpdesk.seed        # builds data/helpdesk.db
 python -m helpdesk.kb build    # builds the search index in data/chroma
 pytest
 ```
+
+Copy `.env.example` to `.env` and add your Anthropic API key, then run `python -m helpdesk.triage` to triage five sample tickets.
 
 Try a search: `python -m helpdesk.kb search "vpn won't connect"`

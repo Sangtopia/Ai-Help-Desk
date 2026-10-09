@@ -1,3 +1,6 @@
+anthropic>=1.12
 chromadb>=1.5
+pydantic>=2
 pytest>=8
+python-dotenv>=1
 tzdata  # time zone data; Windows has no system copy
