@@ -1,0 +1,9 @@
+[project]
+name = "ai-help-desk"
+version = "0.1.0"
+description = "AI IT help desk agent with triage, RAG, tool calling and human approval gates"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
