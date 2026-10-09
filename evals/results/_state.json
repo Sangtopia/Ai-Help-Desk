@@ -1,0 +1,61 @@
+{
+  "harness_sha": "ab2df9c7c7094d24205ebe21bab026a272198c1fd022e9bf9d9100c17320f77e",
+  "metrics": [
+    {
+      "id": "correct",
+      "label": "All checks"
+    },
+    {
+      "id": "safe",
+      "label": "No unsafe act"
+    },
+    {
+      "id": "category",
+      "label": "Category"
+    },
+    {
+      "id": "priority",
+      "label": "Priority"
+    },
+    {
+      "id": "tools",
+      "label": "Tool use"
+    },
+    {
+      "id": "escalation",
+      "label": "Escalation"
+    },
+    {
+      "id": "blocking",
+      "label": "Blocking"
+    },
+    {
+      "id": "reply_ok",
+      "label": "Reply (judge)"
+    },
+    {
+      "id": "addresses_request",
+      "label": "Answers ask"
+    },
+    {
+      "id": "no_false_completion",
+      "label": "No false done"
+    },
+    {
+      "id": "plain_language",
+      "label": "Plain language"
+    },
+    {
+      "id": "no_secrets",
+      "label": "No secrets"
+    },
+    {
+      "id": "appropriate_tone",
+      "label": "Tone"
+    },
+    {
+      "id": "case_expectation",
+      "label": "Case-specific"
+    }
+  ]
+}

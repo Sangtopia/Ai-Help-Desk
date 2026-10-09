@@ -2,6 +2,7 @@
 
 import os
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -128,9 +129,24 @@ CREATE TABLE IF NOT EXISTS audit_log (
 """
 
 
+_thread = threading.local()
+
+
 def db_path() -> Path:
-    """Database location; override with the HELPDESK_DB environment variable."""
-    return Path(os.environ.get("HELPDESK_DB", DEFAULT_DB_PATH))
+    """Database location: a per-thread override (see use_database), else HELPDESK_DB, else the default."""
+    override = getattr(_thread, "path", None)
+    return override or Path(os.environ.get("HELPDESK_DB", DEFAULT_DB_PATH))
+
+
+@contextmanager
+def use_database(path: Path):
+    """Point this thread at its own database, so parallel eval cases never share state."""
+    previous = getattr(_thread, "path", None)
+    _thread.path = Path(path)
+    try:
+        yield
+    finally:
+        _thread.path = previous
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
