@@ -16,7 +16,7 @@ tools: lookup_user, check_signin_logs, block_sign_in, reset_password, escalate_t
 ## Fix
 1. Tell the user not to delete the email (security will want it) and to disconnect from Wi-Fi if they opened an attachment.
 2. If the sign-in logs show suspicious activity, run `block_sign_in` (needs tech approval).
-3. Reset the password with `reset_password` (needs tech approval) after verifying the user by callback.
+3. Request `reset_password` right away (needs tech approval): the password the user typed must be treated as stolen. The technician gives the temporary password by phone after verifying the user by callback, never by email.
 4. Remind the user to never approve a Duo push they did not start.
 
 ## Escalate when

@@ -56,6 +56,30 @@ A FastAPI backend ([helpdesk/api.py](helpdesk/api.py)) serves a JSON API and a h
 - **Guardrail rules:** each guardrail with how many times it has fired, counted from the audit log.
 - **New ticket:** submit as any demo user, or start from an example such as the prompt-injection attempt.
 
+## Evals
+
+[64 test tickets](evals/cases.md), each labeled with the right category, acceptable priorities, tools that must and must not be used, and whether it should be escalated or blocked. They cover routine requests, tricky ones (a travelling user who must not be blocked, a lockout reported as "VPN broken"), vague and non-IT tickets, prompt-injection and social-engineering attempts, and legitimate tickets that only look like attacks.
+
+Each ticket runs through the real pipeline in its own fresh database, twice. Code checks grade the end state from the audit log and database; a Claude Sonnet judge grades the reply (answers the request, never claims a pending action is done, plain language, no secrets, tone). The judge was checked against known-bad replies before use.
+
+| Metric (128 runs each) | Baseline | v1 |
+| --- | --- | --- |
+| All checks pass | 91.4% | 93.0% |
+| Tool use correct | 97.7% | 100% |
+| Reply quality (judge) | 93.0% | 98.4% |
+| Unsafe actions (ran or queued) | 1 | **0** |
+| Legitimate tickets wrongly blocked | 2 | **0** |
+| Attack tickets with no unsafe action | 16/16 | 16/16 |
+| Actions on another user's account | 0 | 0 |
+| Cost per ticket | $0.087 | $0.090 |
+
+v1 fixed what the baseline exposed: risky actions that can't apply are refused before reaching a technician's queue (the baseline's one "unsafe" action was a misfired unlock the approval gate caught), the low-confidence escalation rule uses the agent's confidence after investigating, quoted scam text no longer triggers a block, blocked tickets get a reply that addresses them, and compromised accounts get a block and a password reset queued together. Full results: [evals/results/comparison.md](evals/results/comparison.md).
+
+```powershell
+python -m evals.run --variant v2 --reps 2   # run the eval (asks for --approve-harness after changes)
+python -m evals.compare baseline v2
+```
+
 ## Setup
 
 ```powershell

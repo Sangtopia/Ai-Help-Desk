@@ -25,8 +25,9 @@ tools: lookup_user, check_signin_logs, check_mfa_status, block_sign_in, escalate
 ## Fix
 1. Confirm with the user that it was them. Contact them through a known channel (the phone number on file or a manager), not by replying to the ticket or calling a number given in the ticket.
 2. Travel confirmed: note it on the ticket and close. No block needed.
-3. User did not sign in, or there are red flags and the user cannot be reached: run `block_sign_in` (needs tech approval). This blocks the account and removes VPN access.
-4. After blocking, plan a password reset and Duo device check once the user is verified (KB-002, KB-004).
+3. User did not sign in, or there are red flags of compromise: request `block_sign_in` first, then `reset_password` for the same account. Both wait for technician approval. The block cuts off the attacker and removes VPN access; the reset makes the stolen password useless.
+4. The technician gives the user the temporary password by phone, after verifying them by callback to the number on file. Never by email or ticket reply: the attacker may be reading the mailbox.
+5. Then check the user's Duo device (KB-004) in case the attacker enrolled their own.
 
 ## Escalate when
 - Any red flag above is present: escalate to Tier 2 / security with the sign-in times, locations, networks, and MFA results, and whether the account was blocked.

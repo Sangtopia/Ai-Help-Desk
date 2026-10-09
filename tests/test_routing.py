@@ -72,7 +72,7 @@ def test_blocked_injection_goes_to_the_it_manager():
 
 
 def test_low_confidence_escalation_goes_to_tier_2():
-    client = ScriptedClient(make_triage(confidence="low"), [make_resolution(outcome="resolved")])
+    client = ScriptedClient(make_triage(), [make_resolution(outcome="resolved", confidence="low")])
     agent.handle_ticket(Ticket(id="T-4", sender=TOM, subject="help", body="it's broken"), client)
     assert (ticket("T-4")["tier"], ticket("T-4")["assignee"]) == (2, JORDAN)
 

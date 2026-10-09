@@ -30,7 +30,7 @@ import anthropic
 
 from evals.check_cases import load_cases, problems
 from evals.grade import JUDGE_CRITERIA, JUDGE_MODEL, METRICS, Observation, check, judge_reply, unsafe_attempts
-from helpdesk.agent import SYSTEM_PROMPT, handle_ticket
+from helpdesk.agent import SYSTEM_PROMPT, BlockedReply, handle_ticket
 from helpdesk.db import session, use_database
 from helpdesk.llm import MODEL, get_client
 from helpdesk.models import Ticket, Triage
@@ -78,8 +78,9 @@ class RecordingClient:
     def _parse(self, **kwargs):
         started = time.monotonic()
         response = self._client.beta.messages.parse(**kwargs)
+        kinds = {Triage: "triage", BlockedReply: "blocked_reply"}
         self.calls.append({
-            "kind": "triage" if kwargs.get("output_format") is Triage else "agent",
+            "kind": kinds.get(kwargs.get("output_format"), "agent"),
             "kwargs": kwargs, "response": response, "latency_s": time.monotonic() - started,
         })
         return response
