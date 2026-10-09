@@ -46,6 +46,13 @@ The tests include a scripted "hijacked" model that tries to reset the CEO's pass
 
 Run `python -m helpdesk.agent` to work four demo tickets end to end: a lockout, a quarantined email, a prompt-injection attempt and a push-fatigue account compromise.
 
+## Interface
+
+`streamlit run app.py` opens two views:
+
+- **Submit a ticket:** users pick who they're signed in as (demo only), write a ticket or start from an example, and see the agent's reply and their ticket history.
+- **Technician queue:** every ticket with its triage, the agent's reply and internal note, cited articles, actions waiting for approval with Approve and Reject buttons, and the full audit trail.
+
 ## Setup
 
 ```powershell
