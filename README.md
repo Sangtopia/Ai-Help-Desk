@@ -48,10 +48,12 @@ Run `python -m helpdesk.agent` to work four demo tickets end to end: a lockout, 
 
 ## Interface
 
-`streamlit run app.py` opens two views:
+A FastAPI backend ([helpdesk/api.py](helpdesk/api.py)) serves a JSON API and a help desk web app written in plain HTML, CSS and JavaScript ([web/](web/)), with no build step.
 
-- **Submit a ticket:** users pick who they're signed in as (demo only), write a ticket or start from an example, and see the agent's reply and their ticket history.
-- **Technician queue:** every ticket with its triage, the agent's reply and internal note, cited articles, actions waiting for approval with Approve and Reject buttons, and the full audit trail.
+- **Inbox:** tickets with customer, subject, AI summary, priority, category and status, plus views for tickets needing approval, security tickets and blocked tickets. Search across all of them.
+- **Ticket:** the user's message, the triage result, the agent's investigation (every tool call and its reason), the reply sent to the user, an internal note for technicians, escalations, and Approve and Reject buttons for queued actions. A side panel shows the customer's account, local time, usual hours and devices.
+- **Guardrail rules:** each guardrail with how many times it has fired, counted from the audit log.
+- **New ticket:** submit as any demo user, or start from an example such as the prompt-injection attempt.
 
 ## Setup
 
@@ -64,6 +66,12 @@ python -m helpdesk.kb build    # builds the search index in data/chroma
 pytest
 ```
 
-Copy `.env.example` to `.env` and add your Anthropic API key, then run `python -m helpdesk.triage` to triage five sample tickets.
+Copy `.env.example` to `.env` and add your Anthropic API key, then start the app:
+
+```powershell
+uvicorn helpdesk.api:app --reload
+```
+
+Open http://localhost:8000. You can also run `python -m helpdesk.triage` to triage five sample tickets from the command line.
 
 Try a search: `python -m helpdesk.kb search "vpn won't connect"`

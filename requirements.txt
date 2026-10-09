@@ -1,7 +1,9 @@
 anthropic>=1.12
 chromadb>=1.5
+fastapi>=0.143
+httpx  # for FastAPI's TestClient
 pydantic>=2
 pytest>=8
 python-dotenv>=1
-streamlit>=1.65
 tzdata  # time zone data; Windows has no system copy
+uvicorn[standard]>=0.54
