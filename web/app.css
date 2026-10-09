@@ -141,7 +141,7 @@ a { color: inherit; text-decoration: none; }
 .search svg { width: 16px; height: 16px; }
 .search input { border: 0; outline: none; background: none; width: 100%; color: var(--text); }
 .list-meta { padding: 8px 20px; font-weight: 600; font-size: 13.5px; }
-.table-wrap { overflow: auto; flex: 1; }
+.table-wrap { overflow: auto; flex: 1; min-height: 0; }
 table.tickets { width: 100%; border-collapse: collapse; min-width: 860px; }
 .tickets th {
   text-align: left; font-weight: 500; font-size: 12.5px; color: var(--muted);
@@ -191,11 +191,14 @@ table.tickets { width: 100%; border-collapse: collapse; min-width: 860px; }
 .badge-count { background: var(--amber-bg); color: var(--amber); font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; margin-left: 6px; }
 
 /* ---------- ticket detail ---------- */
-.detail { display: grid; grid-template-columns: 1fr 320px; height: 100%; min-height: 0; }
-.thread-col { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border); }
+/* The detail view fills the main panel exactly; the thread and the side panel each scroll on their own.
+   Every level needs min-height: 0, or a flex/grid child grows to its content and the panel clips it. */
+.detail { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: minmax(0, 1fr);
+  flex: 1; min-height: 0; }
+.thread-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); }
 .detail-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
 .detail-head h2 { margin: 0; font-size: 16px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.thread { flex: 1; overflow-y: auto; padding: 22px 26px 40px; display: flex; flex-direction: column; gap: 18px; }
+.thread { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 26px 40px; display: flex; flex-direction: column; gap: 18px; }
 
 .msg { display: flex; gap: 12px; max-width: 760px; }
 .msg.right { flex-direction: row-reverse; align-self: flex-end; }
@@ -235,7 +238,7 @@ details.steps[open] summary::before { transform: rotate(90deg); }
 .approval pre { margin: 0; padding: 10px; border-radius: 8px; background: var(--bubble-user); font-size: 12px; overflow-x: auto; }
 
 /* side panel */
-.side { overflow-y: auto; }
+.side { overflow-y: auto; min-height: 0; }
 .side-section { padding: 18px 20px; border-bottom: 1px solid var(--border); }
 .side-section h3 { margin: 0 0 12px; font-size: 13.5px; font-weight: 600; }
 .person { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
@@ -283,8 +286,10 @@ details.steps[open] summary::before { transform: rotate(90deg); }
 
 /* ---------- narrow screens ---------- */
 @media (max-width: 1100px) {
-  .detail { grid-template-columns: 1fr; }
-  .side { border-top: 1px solid var(--border); }
+  /* Stacked: thread then customer panel, scrolling together as one column. */
+  .detail { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; overflow-y: auto; }
+  .thread { overflow: visible; }
+  .side { border-top: 1px solid var(--border); overflow: visible; }
   .thread-col { border-right: 0; }
 }
 @media (max-width: 760px) {
