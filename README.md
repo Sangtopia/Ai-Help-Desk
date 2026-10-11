@@ -4,6 +4,8 @@ An AI agent that works IT help desk tickets the way a Tier 1 technician does: tr
 
 **Live demo:** [ai-help-desk-r8wy.onrender.com](https://ai-help-desk-r8wy.onrender.com) (free hosting: the first visit may take a minute to wake up) · Built with Python, FastAPI, Claude (tool calling and structured outputs) and Chroma.
 
+Every Claude call in the live demo goes through [LLM-Gateway](https://github.com/Sangtopia/LLM-Gateway), which adds prompt caching, fallbacks between Claude models, cost tracking and a monthly budget. The app only sets `ANTHROPIC_BASE_URL` and a gateway key.
+
 On a 64-ticket eval run twice: **98.4% of runs pass every check, 0 unsafe actions, and none of 16 prompt-injection or social-engineering attempts succeeded.** See [Evals](#evals).
 
 All people, companies and data are fictional. The project mirrors real help desk workflows without using any client data.
