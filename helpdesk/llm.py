@@ -59,6 +59,9 @@ POLICIES = {
         ModelPolicy("haiku", HAIKU, lambda t: HAIKU, HAIKU),
         ModelPolicy("routed", HAIKU, lambda t: MODEL if needs_strong_model(t) else HAIKU, HAIKU),
         ModelPolicy("routed-wide", HAIKU, lambda t: MODEL if needs_strong_model_wide(t) else HAIKU, HAIKU),
+        # Added after the first runs showed Haiku's misses were mostly in triage (category,
+        # priority, blocking), not in the agent loop: keep triage on Opus, run the agent on Haiku.
+        ModelPolicy("opus-triage", MODEL, lambda t: HAIKU, HAIKU),
     ]
 }
 

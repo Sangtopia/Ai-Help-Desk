@@ -42,3 +42,9 @@ def test_routine_ticket_goes_to_haiku():
 ])
 def test_wide_routing_keeps_only_p1_security_and_low_confidence_on_opus(overrides, strong):
     assert needs_strong_model_wide(triage(**overrides)) is strong
+
+
+def test_opus_triage_policy_runs_the_agent_on_haiku():
+    policy = POLICIES["opus-triage"]
+    assert policy.triage == MODEL
+    assert policy.agent(triage(priority="P1", category="security")) == HAIKU
