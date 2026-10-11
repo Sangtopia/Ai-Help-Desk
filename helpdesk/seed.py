@@ -143,9 +143,14 @@ def _signins(now: datetime) -> list[tuple]:
         rows.append((2, _iso(attack + timedelta(minutes=minutes)), "vpn", "192.0.2.77", "hosting",
                      "Singapore", "SG", "Asia/Singapore", result, "duo_push"))
 
-    # Tom Becker locked himself out this morning.
-    for minutes_ago in (40, 35, 31, 28, 25):
-        rows.append((4, _iso(now - timedelta(minutes=minutes_ago)), "m365", CORPORATE_IP.format(10),
+    # Tom Becker locked himself out on the most recent weekday morning. Anchored to a local time,
+    # not to "now", so the case doesn't depend on when it runs: run at night, "minutes ago" would
+    # look like an after-hours attack and the agent would rightly escalate instead of unlocking.
+    lockout = _most_recent_local(now, NEW_YORK, 9, 40)
+    while lockout.weekday() >= 5:
+        lockout -= timedelta(days=1)
+    for minutes_ago in (20, 15, 11, 8, 5):
+        rows.append((4, _iso(lockout - timedelta(minutes=minutes_ago)), "m365", CORPORATE_IP.format(10),
                      "corporate", "New York", "US", NEW_YORK, "failed_password", "none"))
 
     # Someone is trying the former employee's account overnight.
