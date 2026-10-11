@@ -15,6 +15,11 @@ services:
         value: "3.13"
       - key: ANTHROPIC_API_KEY
         sync: false  # Render asks for it when you create the Blueprint; it is never stored in the repo
+      # Optional: route every Claude call through LLM-Gateway (github.com/Sangtopia/LLM-Gateway) for prompt
+      # caching, fallbacks, cost tracking and a monthly budget. Set this to the gateway's URL and
+      # ANTHROPIC_API_KEY to a gateway key (gw-...). Leave it unset to call Anthropic directly.
+      - key: ANTHROPIC_BASE_URL
+        sync: false
       # Each new ticket spends Anthropic credits (~$0.10), so cap usage of the public demo.
       - key: MAX_TICKETS_PER_DAY
         value: "20"
