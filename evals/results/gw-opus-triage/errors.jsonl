@@ -1,0 +1,2 @@
+{"prompt_id": "acct-02", "rep": 0, "class": "harness_or_serving_error", "error": "AttributeError(\"'RustBindingsAPI' object has no attribute 'bindings'\")"}
+{"prompt_id": "acct-01", "rep": 0, "class": "harness_or_serving_error", "error": "KeyError('C:\\\\Users\\\\emsa6\\\\Desktop\\\\Projects\\\\Ai-Help-Desk\\\\data\\\\chroma')"}

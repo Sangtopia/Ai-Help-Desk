@@ -3,6 +3,7 @@
     python -m evals.run --cases acct-01,sec-01 --reps 1      # a pilot
     python -m evals.run --reps 2                              # the full set
     python -m evals.run --summary                              # re-print the summary from saved results
+    python -m evals.run --policy routed --variant routed --reps 2   # route tickets between models
 
 Writes evals/results/<variant>/results.jsonl (one row per case x rep), traces/<id>_rep<k>.json
 (the full conversation), errors.jsonl (attempts that never produced a gradable result), and summary.md.
@@ -15,13 +16,14 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import random
 import shutil
 import sys
 import tempfile
 import threading
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,7 +34,7 @@ from evals.check_cases import load_cases, problems
 from evals.grade import JUDGE_CRITERIA, JUDGE_MODEL, METRICS, Observation, check, judge_reply, unsafe_attempts
 from helpdesk.agent import SYSTEM_PROMPT, BlockedReply, handle_ticket
 from helpdesk.db import session, use_database
-from helpdesk.llm import MODEL, get_client
+from helpdesk.llm import POLICIES, get_client, model_policy
 from helpdesk.models import Ticket, Triage
 from helpdesk.seed import build_database
 
@@ -42,8 +44,16 @@ STATE = RESULTS / "_state.json"
 HARNESS_FILES = [HERE / "run.py", HERE / "grade.py", HERE / "cases.json"]
 RETRYABLE = (anthropic.RateLimitError, anthropic.InternalServerError, anthropic.APIConnectionError)
 
-# $ per million tokens (input, output). Cache writes cost 1.25x input, cache reads 0.1x input.
-PRICES = {"claude-opus-5-5": (4.00, 20.00), "claude-sonnet-5-5": (2.00, 10.00)}
+# $ per million tokens: (input, output, cache read). Cache writes cost 1.25x input. Each call is
+# priced as the model that served it, so a run that mixes models (routing, fallbacks) costs out right.
+# Haiku 5.5 charges more for prompts over 100K tokens; this agent's prompts stay far below that.
+PRICES = {
+    "claude-opus-5-5": (4.00, 20.00, 0.20),
+    "claude-opus-5": (5.00, 25.00, 0.50),
+    "claude-sonnet-5-5": (2.00, 10.00, 0.10),
+    "claude-sonnet-5": (2.00, 10.00, 0.20),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01),
+}
 USAGE_KEYS = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
 
 
@@ -92,10 +102,18 @@ def add_usage(total: dict, usage) -> None:
 
 
 def cost(model: str, usage: dict) -> float:
-    price_in, price_out = PRICES.get(model, (0.0, 0.0))
+    if model not in PRICES:
+        raise RuntimeError(f"unpriced_model: no price for {model}; add it to PRICES")
+    price_in, price_out, price_cache_read = PRICES[model]
     return (usage.get("input_tokens", 0) * price_in + usage.get("output_tokens", 0) * price_out
-            + usage.get("cache_read_input_tokens", 0) * price_in * 0.1
+            + usage.get("cache_read_input_tokens", 0) * price_cache_read
             + usage.get("cache_creation_input_tokens", 0) * price_in * 1.25) / 1e6
+
+
+def usage_of(response) -> dict:
+    usage = {}
+    add_usage(usage, response.usage)
+    return usage
 
 
 def observe(ticket_id: str) -> Observation:
@@ -180,9 +198,9 @@ def _run_case_in(db: Path, case: dict, rep: int, use_judge: bool) -> dict:
         recorder, retries = with_retries(attempt_once)
         obs = observe(ticket.id)
 
-        models = {c["response"].model for c in recorder.calls}
-        if models - {MODEL}:
-            raise RuntimeError(f"served_model_mismatch: asked for {MODEL}, got {sorted(models)}")
+        # Which model served each call. With routing or fallbacks these can differ from what was asked.
+        served = [{"kind": c["kind"], "asked": c["kwargs"]["model"], "served": c["response"].model}
+                  for c in recorder.calls]
 
         grade, why = check(case, obs)
         judge_usage, judge_model, judge_why = {}, None, None
@@ -197,14 +215,18 @@ def _run_case_in(db: Path, case: dict, rep: int, use_judge: bool) -> dict:
         usage = {}
         for call in recorder.calls:
             add_usage(usage, call["response"].usage)
+        app_cost = sum(cost(c["response"].model, usage_of(c["response"])) for c in recorder.calls)
+        agent_models = sorted({c["served"] for c in served if c["kind"] == "agent"})
         truncated = any(c["response"].stop_reason == "max_tokens" for c in recorder.calls)
         return {
             "prompt_id": case["id"], "rep": rep, "prompt": case["body"], "tags": case["tags"],
             "status": "truncated" if truncated else "ok",
             "stop_reason": recorder.calls[-1]["response"].stop_reason if recorder.calls else None,
             "grade": grade, "explanation": why,
-            "model": MODEL, "usage": usage, "judge_model": judge_model, "judge_usage": judge_usage,
-            "cost_usd": round(cost(MODEL, usage) + (cost(judge_model, judge_usage) if judge_model else 0), 5),
+            "policy": model_policy().name, "model": "+".join(agent_models) or None, "served": served,
+            "usage": usage, "judge_model": judge_model, "judge_usage": judge_usage,
+            "cost_usd": round(app_cost + (cost(judge_model, judge_usage) if judge_model else 0), 5),
+            "app_cost_usd": round(app_cost, 5),
             "latency_s": round(sum(c["latency_s"] for c in recorder.calls), 2),
             "case_seconds": round(time.monotonic() - started, 2),
             "model_calls": len(recorder.calls),
@@ -231,8 +253,9 @@ def run(variant: str, case_ids: list[str] | None, reps: int, workers: int, timeo
     cases = [c for c in load_cases() if not case_ids or c["id"] in case_ids]
     done = {(r["prompt_id"], r["rep"]) for r in load_rows(results_path)}
     todo = [(c, rep) for rep in range(reps) for c in cases if (c["id"], rep) not in done]
+    policy = model_policy()
     print(f"{len(cases)} cases x {reps} reps: {len(todo)} to run, {len(done)} already done. "
-          f"Agent {MODEL}, judge {JUDGE_MODEL if use_judge else 'off'}.")
+          f"Model policy {policy.name} (triage {policy.triage}), judge {JUDGE_MODEL if use_judge else 'off'}.")
     lock = threading.Lock()
 
     def attempt(case: dict, rep: int) -> None:
@@ -258,7 +281,7 @@ def run(variant: str, case_ids: list[str] | None, reps: int, workers: int, timeo
                       f"reply={row['grade'].get('reply_ok', '-')} ${row['cost_usd']:.3f} {row['case_seconds']:.0f}s")
             else:
                 error = box.get("error")
-                kind = ("timeout" if error is None else "served_model_mismatch" if "served_model_mismatch" in str(error)
+                kind = ("timeout" if error is None else "unpriced_model" if "unpriced_model" in str(error)
                         else "refusal" if "declined" in str(error) else "harness_or_serving_error")
                 with errors_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps({"prompt_id": case["id"], "rep": rep, "class": kind,
@@ -342,9 +365,12 @@ def summarize(variant: str) -> str:
     truncated = [r for r in load_rows(out / "results.jsonl") if r["status"] != "ok"]
     errors = load_rows(out / "errors.jsonl")
     cases = {c["id"]: c for c in load_cases()}
+    policies = sorted({r.get("policy", "opus") for r in rows})
+    agent_models = Counter(r.get("model") or "none (blocked before the agent)" for r in rows)
     lines = [f"# Eval results: {variant}", "",
              f"{len({r['prompt_id'] for r in rows})} cases, {len(rows)} graded runs, {len(truncated)} truncated, "
-             f"{len(errors)} harness errors. Agent `{MODEL}`, judge `{JUDGE_MODEL}`.", "",
+             f"{len(errors)} harness errors. Model policy `{', '.join(policies)}`, judge `{JUDGE_MODEL}`.", "",
+             "Agent model per run: " + ", ".join(f"`{m}` {n}" for m, n in agent_models.most_common()) + ".", "",
              "| Metric | Score | 95% CI | n |", "| --- | --- | --- | --- |"]
     for metric, label in METRICS:
         values = [r["grade"][metric] for r in rows if r["grade"].get(metric) is not None]
@@ -374,7 +400,9 @@ def summarize(variant: str) -> str:
               *[f"| {g} | {sum(v) / len(v):.0%} ({len(v)}) |" for g, v in sorted(by_group.items())]]
 
     spend = sum(r["cost_usd"] for r in rows)
-    lines += ["", f"Cost: ${spend:.2f} total, ${spend / max(1, len(rows)):.3f} per run. "
+    app_spend = sum(r.get("app_cost_usd", r["cost_usd"]) for r in rows)
+    lines += ["", f"Cost: ${spend:.2f} total, ${spend / max(1, len(rows)):.3f} per run "
+              f"(${app_spend / max(1, len(rows)):.3f} for the help desk itself, the rest is the eval judge). "
               f"Model latency: median {sorted(r['latency_s'] for r in rows)[len(rows) // 2] if rows else 0:.0f}s per ticket.", "",
               "## Failed checks", ""]
     for r in sorted(rows, key=lambda r: (r["prompt_id"], r["rep"])):
@@ -399,7 +427,11 @@ def main() -> None:
     parser.add_argument("--summary", action="store_true", help="only rebuild summary.md from saved results")
     parser.add_argument("--rejudge", action="store_true", help="re-run only the judge on the variant's saved replies")
     parser.add_argument("--approve-harness", action="store_true")
+    parser.add_argument("--policy", choices=sorted(POLICIES),
+                        help="model policy for the help desk (default: HELPDESK_MODEL_POLICY, else opus)")
     args = parser.parse_args()
+    if args.policy:
+        os.environ["HELPDESK_MODEL_POLICY"] = args.policy
 
     if args.summary:
         print(summarize(args.variant))

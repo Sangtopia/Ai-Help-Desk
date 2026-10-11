@@ -23,7 +23,7 @@ from helpdesk.guardrails import (
     NEEDS_APPROVAL, TOOL_POLICY, audit, check_identity, check_preconditions, queue_approval, scan_for_injection,
 )
 from helpdesk.kb import search_kb
-from helpdesk.llm import FALLBACK_BETA, MODEL, get_client
+from helpdesk.llm import FALLBACK_BETA, get_client, model_policy
 from helpdesk.models import Resolution, Ticket, TicketResult, Triage
 from helpdesk.queue import AI_AGENT, TIER_NAMES, technician_level
 from helpdesk.routing import assign_to_tier, can_access, route_ticket
@@ -197,10 +197,12 @@ def run_agent(ticket: Ticket, triage_result: Triage, client: anthropic.Anthropic
     client = client or get_client()
     articles = search_kb(f"{ticket.subject}\n{ticket.body}\n{triage_result.summary}")
     messages = [{"role": "user", "content": _first_message(ticket, triage_result, articles)}]
+    # Chosen once per ticket, so every turn of the conversation uses the same model.
+    model = model_policy().agent(triage_result)
 
     for _ in range(MAX_TURNS):
         response = client.beta.messages.parse(
-            model=MODEL,
+            model=model,
             max_tokens=16000,
             output_config={"effort": "medium"},
             betas=[FALLBACK_BETA],
@@ -278,7 +280,7 @@ def blocked_reply(ticket: Ticket, client: anthropic.Anthropic | None = None) -> 
     client = client or get_client()
     try:
         response = client.beta.messages.parse(
-            model=MODEL,
+            model=model_policy().blocked_reply,
             max_tokens=2048,
             output_config={"effort": "low"},
             betas=[FALLBACK_BETA],

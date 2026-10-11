@@ -5,7 +5,7 @@ Run with:  python -m helpdesk.triage
 
 import anthropic
 
-from helpdesk.llm import FALLBACK_BETA, MODEL, get_client
+from helpdesk.llm import FALLBACK_BETA, get_client, model_policy
 from helpdesk.models import Ticket, Triage
 
 SYSTEM_PROMPT = """\
@@ -54,7 +54,7 @@ class TriageError(Exception):
 def triage(ticket: Ticket, client: anthropic.Anthropic | None = None) -> Triage:
     client = client or get_client()
     response = client.beta.messages.parse(
-        model=MODEL,
+        model=model_policy().triage,
         max_tokens=4096,
         output_config={"effort": "low"},  # a short classification does not need deep reasoning
         betas=[FALLBACK_BETA],
